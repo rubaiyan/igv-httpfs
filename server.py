@@ -23,13 +23,15 @@ import requests
 import sys
 import urllib
 import wsgiref.simple_server
+from requests_kerberos import HTTPKerberosAuth
 
 
 # These are defaults which can be overridden by environment variables.
 CONFIG = {
     'HTTPFS_ENDPOINT': 'http://localhost:14000',
     'HDFS_USER': 'igv',
-    'HDFS_PREFIX': ''
+    'HDFS_PREFIX': '',
+    'HDFS_AUTH': 'simple'
 }
 CONFIG.update(os.environ)
 
@@ -44,7 +46,7 @@ def make_httpfs_url(path, user_params={}):
 
 def check_connection():
     url = make_httpfs_url('/', {'op': 'liststatus'})
-    response = requests.get(url)
+    response = requests.get(url, auth=make_auth())
     assert 'FileStatuses' in response.json(), (
         'Unable to connect to HttpFS, request for %s returned %r' % (url, response.json()))
 
@@ -57,6 +59,10 @@ def status_code_response(status_code):
 def make_response_headers(response_body):
     return [('Content-Type', 'text/plain'),
             ('Content-Length', str(len(response_body)))]
+
+
+def make_auth():
+  return HTTPKerberosAuth() if CONFIG['HDFS_AUTH'] == "kerberos" else None
 
 
 BYTE_RANGE_RE = re.compile(r'bytes=(\d+)-(\d+)')
@@ -88,7 +94,7 @@ def handle_remote_failure(response):
 
 def handle_normal_request(path, params={}):
     url = make_httpfs_url(path, params)
-    response = requests.get(url)
+    response = requests.get(url, auth=make_auth())
 
     if response.status_code != 200:
         return handle_remote_failure(response)
@@ -128,7 +134,7 @@ def handle_range_request(environ):
     # TODO: cache this response.
     stat_url = make_httpfs_url(path, {'op': 'getcontentsummary'})
     try:
-        total_length = requests.get(stat_url).json()['ContentSummary']['length']
+        total_length = requests.get(stat_url, auth=make_auth()).json()['ContentSummary']['length']
     except (KeyError, ValueError):
         response_body = 'Unable to get total length of %s' % path
         return (status_code_response(500),
